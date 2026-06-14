@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from scipy.signal import butter, filtfilt, find_peaks
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import io
@@ -63,47 +62,57 @@ st.markdown("""
 
 
 # ── Pipeline functions ────────────────────────────────────────────
-def lowpass_filter(data, cutoff=5, fs=50, order=4):
-    """Butterworth low-pass filter - isolates walking signal (0.5 to 3 Hz).
-    Removes high-frequency noise while preserving clinically meaningful movement patterns."""
-    nyq = fs / 2
-    normal_cutoff = np.clip(cutoff / nyq, 0.001, 0.999)
-    b, a = butter(order, normal_cutoff, btype='low')
-    return filtfilt(b, a, data)
+def lowpass_filter(data, alpha=0.1):
+    filtered = np.zeros_like(data)
+    filtered[0] = data[0]
+
+    for i in range(1, len(data)):
+        filtered[i] = alpha * data[i] + (1 - alpha) * filtered[i - 1]
+
+    return filtered
 
 
-def run_gait_pipeline(df):
+def find_peaks_np(data, threshold):
+    peaks = []
+    for i in range(1, len(data) - 1):
+        if data[i] > data[i-1] and data[i] > data[i+1] and data[i] > threshold:
+            peaks.append(i)
+    return np.array(peaks)
+
+
+
     """Run the full gait analysis pipeline on the loaded dataframe."""
-    time  = df['time'].values
+def run_gait_pipeline(df):
+    time = df['time'].values
     accel = df['accel_abs'].values
 
-    # Dynamic sampling rate from actual timestamps
     fs = 1 / np.mean(np.diff(time))
 
-    # Filter
-    filtered = lowpass_filter(accel, cutoff=5, fs=fs)
+    filtered = lowpass_filter(accel)
 
-    # Features
+    peaks = find_peaks_np(filtered, np.mean(filtered))
+
     mean_intensity = np.mean(np.abs(filtered))
-    variability    = np.std(filtered)
-    jerk           = np.diff(filtered)
+    variability = np.std(filtered)
+    jerk = np.diff(filtered)
 
-    # Step detection
-    peaks, _ = find_peaks(
-        filtered,
-        height=np.mean(filtered),
-        distance=int(fs * 0.4)
-    )
     step_count = len(peaks)
-    duration   = time[-1]
-    cadence    = step_count / (duration / 60)
+    duration = time[-1]
+    cadence = step_count / (duration / 60)
 
     return {
-        'time': time, 'accel': accel, 'filtered': filtered,
-        'jerk': jerk, 'peaks': peaks, 'fs': fs,
-        'step_count': step_count, 'cadence': cadence,
-        'mean_intensity': mean_intensity, 'variability': variability,
-        'duration': duration, 'df': df
+        'time': time,
+        'accel': accel,
+        'filtered': filtered,
+        'jerk': jerk,
+        'peaks': peaks,
+        'fs': fs,
+        'step_count': step_count,
+        'cadence': cadence,
+        'mean_intensity': mean_intensity,
+        'variability': variability,
+        'duration': duration,
+        'df': df
     }
 
 
@@ -160,7 +169,7 @@ def build_art_figure(df):
     accel = df['accel_abs'].values
     fs    = 1 / np.mean(np.diff(time))
 
-    filtered = lowpass_filter(accel, cutoff=5, fs=fs)
+    filtered = lowpass_filter(accel)
 
     # Normalise to 0 to 1
     norm = (filtered - filtered.min()) / (filtered.max() - filtered.min())
